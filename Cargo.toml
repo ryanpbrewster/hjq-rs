@@ -5,3 +5,5 @@ authors = ["Ryan P. Brewster <RyanPBrewster@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+serde = "1.0"
+serde_json = "1.0"
