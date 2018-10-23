@@ -2,7 +2,7 @@
 extern crate serde;
 extern crate serde_json;
 
-use serde::de::{Deserialize, Deserializer, MapAccess, Visitor};
+use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 
 const TINY: &str = r#"
@@ -13,6 +13,14 @@ const TINY: &str = r#"
   "d": null,
   "e": {
     "f": "bar"
+  },
+  "g": {
+    "h": {
+        "i": -3.141592e7
+    }
+  },
+  "x": {
+    "y": ["asdf", 42, true, false, [1,2,3], { "foo": "bar" }]
   }
 }
 "#;
@@ -67,6 +75,27 @@ impl<'de> Visitor<'de> for Sentinel {
         }
         Ok(Sentinel)
     }
+
+    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        for i in 0.. {
+            let k = i.to_string();
+            unsafe {
+                PREFIX.push_str(&k);
+                PREFIX.push('/');
+            }
+            let tmp = seq.next_element::<Sentinel>()?;
+            unsafe {
+                PREFIX.split_off(PREFIX.len() - k.len() - 1);
+            }
+            if tmp.is_none() {
+                break;
+            }
+        }
+        Ok(Sentinel)
+    }
 }
 
 impl<'de> Deserialize<'de> for Sentinel {
@@ -79,5 +108,6 @@ impl<'de> Deserialize<'de> for Sentinel {
 }
 
 fn main() {
+    println!("{}", TINY);
     let _: Sentinel = serde_json::from_str(TINY).unwrap();
 }
