@@ -1,29 +1,50 @@
 #![feature(const_string_new)]
 extern crate serde;
 extern crate serde_json;
+extern crate structopt;
 
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
+use std::fs::File;
+use std::path::PathBuf;
+use structopt::StructOpt;
 
-const TINY: &str = r#"
-{
-  "a": 1,
-  "b": 2,
-  "c": true,
-  "d": null,
-  "e": {
-    "f": "bar"
-  },
-  "g": {
-    "h": {
-        "i": -3.141592e7
+fn main() {
+    let opts = Options::from_args();
+    match opts.cmd {
+        Command::Trace { input } => {
+            let fin = File::open(input).expect("open file");
+            let _ = serde_json::from_reader::<File, SideEffectingSentinel>(fin).unwrap();
+        }
     }
-  },
-  "x": {
-    "y": ["asdf", 42, true, false, [1,2,3], { "foo": "bar" }]
-  }
 }
-"#;
+
+#[derive(StructOpt)]
+struct Options {
+    #[structopt(subcommand)]
+    cmd: Command,
+}
+
+#[derive(StructOpt)]
+enum Command {
+    #[structopt(name = "trace")]
+    Trace {
+        #[structopt(short = "i", long = "input", parse(from_os_str))]
+        input: PathBuf,
+    },
+}
+
+struct SideEffectingSentinel;
+impl<'de> Deserialize<'de> for SideEffectingSentinel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut buf = String::new();
+        deserializer.deserialize_any(SideEffectingVisitor { prefix: &mut buf })?;
+        Ok(SideEffectingSentinel)
+    }
+}
 
 struct SideEffectingVisitor<'a> {
     prefix: &'a mut String,
@@ -45,7 +66,7 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
     type Value = ();
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(formatter, "some bespoke garbage")
+        write!(formatter, "anything vaguely json-like")
     }
     fn visit_bool<E>(self, v: bool) -> Result<(), E> {
         println!("{} = {}", self.prefix, v);
@@ -64,6 +85,10 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
         Ok(())
     }
     fn visit_str<E>(self, v: &str) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_string<E>(self, v: String) -> Result<(), E> {
         println!("{} = {}", self.prefix, v);
         Ok(())
     }
@@ -94,8 +119,8 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
     where
         A: MapAccess<'de>,
     {
-        while let Some(k) = map.next_key::<&str>()? {
-            self.prefix.push_str(k);
+        while let Some(k) = map.next_key::<String>()? {
+            self.prefix.push_str(&k);
             self.prefix.push('/');
             map.next_value_seed(SideEffectingVisitor {
                 prefix: self.prefix,
@@ -104,21 +129,4 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
         }
         Ok(())
     }
-}
-
-struct SideEffectingSentinel;
-impl<'de> Deserialize<'de> for SideEffectingSentinel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let mut buf = String::new();
-        deserializer.deserialize_any(SideEffectingVisitor { prefix: &mut buf })?;
-        Ok(SideEffectingSentinel)
-    }
-}
-
-fn main() {
-    println!("{}", TINY);
-    let _ = serde_json::from_str::<SideEffectingSentinel>(TINY).unwrap();
 }
