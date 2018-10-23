@@ -6,7 +6,7 @@ extern crate structopt;
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -42,15 +42,23 @@ impl<'de> Deserialize<'de> for SideEffectingSentinel {
         D: Deserializer<'de>,
     {
         let mut buf = String::new();
-        deserializer.deserialize_any(SideEffectingVisitor { prefix: &mut buf })?;
+        let stdout = std::io::stdout();
+        deserializer.deserialize_any(SideEffectingVisitor {
+            prefix: &mut buf,
+            writer: &mut stdout.lock(),
+        })?;
         Ok(SideEffectingSentinel)
     }
 }
 
-struct SideEffectingVisitor<'a> {
+struct SideEffectingVisitor<'a, W> {
     prefix: &'a mut String,
+    writer: &'a mut W,
 }
-impl<'de, 'a> DeserializeSeed<'de> for SideEffectingVisitor<'a> {
+impl<'de, 'a, W> DeserializeSeed<'de> for SideEffectingVisitor<'a, W>
+where
+    W: Write,
+{
     type Value = ();
 
     fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
@@ -59,42 +67,46 @@ impl<'de, 'a> DeserializeSeed<'de> for SideEffectingVisitor<'a> {
     {
         deserializer.deserialize_any(SideEffectingVisitor {
             prefix: self.prefix,
+            writer: self.writer,
         })
     }
 }
 
-impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
+impl<'de, 'a, W> Visitor<'de> for SideEffectingVisitor<'a, W>
+where
+    W: Write,
+{
     type Value = ();
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(formatter, "anything vaguely json-like")
     }
     fn visit_bool<E>(self, v: bool) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_i64<E>(self, v: i64) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_u64<E>(self, v: u64) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_f64<E>(self, v: f64) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_str<E>(self, v: &str) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_string<E>(self, v: String) -> Result<(), E> {
-        println!("{} = {}", self.prefix, v);
+        writeln!(self.writer, "{} = {}", self.prefix, v);
         Ok(())
     }
     fn visit_unit<E>(self) -> Result<(), E> {
-        println!("{} = {}", self.prefix, "null");
+        writeln!(self.writer, "{} = null", self.prefix);
         Ok(())
     }
     fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
@@ -107,6 +119,7 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
             self.prefix.push('/');
             let tmp = seq.next_element_seed(SideEffectingVisitor {
                 prefix: self.prefix,
+                writer: self.writer,
             })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
             if tmp.is_none() {
@@ -125,6 +138,7 @@ impl<'de, 'a> Visitor<'de> for SideEffectingVisitor<'a> {
             self.prefix.push('/');
             map.next_value_seed(SideEffectingVisitor {
                 prefix: self.prefix,
+                writer: self.writer,
             })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
         }
