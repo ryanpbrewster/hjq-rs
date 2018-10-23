@@ -25,8 +25,23 @@ const TINY: &str = r#"
 }
 "#;
 
-struct SentinelVisitor<'a> { prefix: &'a mut String }
-impl <'de, 'a> Visitor<'de> for SentinelVisitor<'a> {
+struct SentinelSeed<'a> {
+    prefix: &'a mut String,
+}
+impl<'de, 'a> DeserializeSeed<'de> for SentinelSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(SentinelSeed {
+            prefix: self.prefix,
+        })
+    }
+}
+
+impl<'de, 'a> Visitor<'de> for SentinelSeed<'a> {
     type Value = ();
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
@@ -57,14 +72,16 @@ impl <'de, 'a> Visitor<'de> for SentinelVisitor<'a> {
         Ok(())
     }
     fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
-        where
-            A: SeqAccess<'de>,
+    where
+        A: SeqAccess<'de>,
     {
         for i in 0.. {
             let k = i.to_string();
             self.prefix.push_str(&k);
             self.prefix.push('/');
-            let tmp = seq.next_element_seed(SentinelSeed { prefix: self.prefix })?;
+            let tmp = seq.next_element_seed(SentinelSeed {
+                prefix: self.prefix,
+            })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
             if tmp.is_none() {
                 break;
@@ -74,36 +91,26 @@ impl <'de, 'a> Visitor<'de> for SentinelVisitor<'a> {
     }
 
     fn visit_map<A>(self, mut map: A) -> Result<(), A::Error>
-        where
-            A: MapAccess<'de>,
+    where
+        A: MapAccess<'de>,
     {
         while let Some(k) = map.next_key::<&str>()? {
             self.prefix.push_str(k);
             self.prefix.push('/');
-            map.next_value_seed(SentinelSeed { prefix: self.prefix })?;
+            map.next_value_seed(SentinelSeed {
+                prefix: self.prefix,
+            })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
         }
         Ok(())
     }
 }
 
-struct SentinelSeed<'a> { prefix: &'a mut String }
-impl<'de, 'a> DeserializeSeed<'de> for SentinelSeed<'a> {
-    type Value = ();
-
-    fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-
-        deserializer.deserialize_any(SentinelVisitor { prefix: self.prefix })
-    }
+struct OuterSentinelVisitor {
+    prefix: String,
 }
 
-struct OuterSentinelVisitor { prefix: String }
-
-impl<'de> Visitor<'de> for OuterSentinelVisitor
-{
+impl<'de> Visitor<'de> for OuterSentinelVisitor {
     type Value = ();
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -134,14 +141,16 @@ impl<'de> Visitor<'de> for OuterSentinelVisitor
         Ok(())
     }
     fn visit_seq<A>(mut self, mut seq: A) -> Result<(), A::Error>
-        where
-            A: SeqAccess<'de>,
+    where
+        A: SeqAccess<'de>,
     {
         for i in 0.. {
             let k = i.to_string();
             self.prefix.push_str(&k);
             self.prefix.push('/');
-            let tmp = seq.next_element_seed(SentinelSeed { prefix: &mut self.prefix })?;
+            let tmp = seq.next_element_seed(SentinelSeed {
+                prefix: &mut self.prefix,
+            })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
             if tmp.is_none() {
                 break;
@@ -151,13 +160,15 @@ impl<'de> Visitor<'de> for OuterSentinelVisitor
     }
 
     fn visit_map<A>(mut self, mut map: A) -> Result<(), A::Error>
-        where
-            A: MapAccess<'de>,
+    where
+        A: MapAccess<'de>,
     {
         while let Some(k) = map.next_key::<&str>()? {
             self.prefix.push_str(k);
             self.prefix.push('/');
-            map.next_value_seed(SentinelSeed { prefix: &mut self.prefix })?;
+            map.next_value_seed(SentinelSeed {
+                prefix: &mut self.prefix,
+            })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
         }
         Ok(())
@@ -165,10 +176,14 @@ impl<'de> Visitor<'de> for OuterSentinelVisitor
 }
 
 struct OuterSentinel;
-impl <'de> Deserialize<'de> for OuterSentinel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
-        D: Deserializer<'de> {
-        let visitor = OuterSentinelVisitor { prefix: String::new() };
+impl<'de> Deserialize<'de> for OuterSentinel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let visitor = OuterSentinelVisitor {
+            prefix: String::new(),
+        };
         deserializer.deserialize_any(visitor)?;
         Ok(OuterSentinel)
     }
