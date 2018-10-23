@@ -6,6 +6,7 @@ extern crate structopt;
 use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 use std::fs::File;
+use std::io::BufReader;
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -13,8 +14,8 @@ fn main() {
     let opts = Options::from_args();
     match opts.cmd {
         Command::Trace { input } => {
-            let fin = File::open(input).expect("open file");
-            let _ = serde_json::from_reader::<File, SideEffectingSentinel>(fin).unwrap();
+            let fin = BufReader::new(File::open(input).expect("open file"));
+            serde_json::from_reader::<BufReader<File>, SideEffectingSentinel>(fin).unwrap();
         }
     }
 }
