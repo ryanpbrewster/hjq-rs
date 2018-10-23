@@ -2,8 +2,9 @@
 extern crate serde;
 extern crate serde_json;
 
-use serde::de::{Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
+use std::io::Write;
 
 const TINY: &str = r#"
 {
@@ -25,89 +26,161 @@ const TINY: &str = r#"
 }
 "#;
 
-static mut PREFIX: String = String::new();
+struct SentinelSeed<'a> { prefix: &'a mut String }
+impl<'de, 'a> DeserializeSeed<'de> for SentinelSeed<'a> {
+    type Value = ();
 
-struct Sentinel;
-impl<'de> Visitor<'de> for Sentinel {
-    type Value = Sentinel;
-
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        formatter.write_str("some bespoke garbage")
-    }
-
-    fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, v);
-        Ok(Sentinel)
-    }
-    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, v);
-        Ok(Sentinel)
-    }
-    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, v);
-        Ok(Sentinel)
-    }
-    fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, v);
-        Ok(Sentinel)
-    }
-    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, v);
-        Ok(Sentinel)
-    }
-    fn visit_unit<E>(self) -> Result<Self::Value, E> {
-        println!("{} = {}", unsafe { &PREFIX }, "null");
-        Ok(Sentinel)
-    }
-    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    fn deserialize<D>(self, deserializer: D) -> Result<(), D::Error>
     where
-        A: MapAccess<'de>,
+        D: Deserializer<'de>,
     {
-        while let Some(k) = map.next_key::<&str>()? {
-            unsafe {
-                PREFIX.push_str(k);
-                PREFIX.push('/');
+        struct SentinelVisitor<'a> { prefix: &'a mut String };
+        impl <'de, 'a> Visitor<'de> for SentinelVisitor<'a> {
+            type Value = ();
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+                write!(formatter, "some bespoke garbage")
             }
-            map.next_value::<Sentinel>()?;
-            unsafe {
-                PREFIX.split_off(PREFIX.len() - k.len() - 1);
+            fn visit_bool<E>(self, v: bool) -> Result<(), E> {
+                println!("{} = {}", self.prefix, v);
+                Ok(())
+            }
+            fn visit_i64<E>(self, v: i64) -> Result<(), E> {
+                println!("{} = {}", self.prefix, v);
+                Ok(())
+            }
+            fn visit_u64<E>(self, v: u64) -> Result<(), E> {
+                println!("{} = {}", self.prefix, v);
+                Ok(())
+            }
+            fn visit_f64<E>(self, v: f64) -> Result<(), E> {
+                println!("{} = {}", self.prefix, v);
+                Ok(())
+            }
+            fn visit_str<E>(self, v: &str) -> Result<(), E> {
+                println!("{} = {}", self.prefix, v);
+                Ok(())
+            }
+            fn visit_unit<E>(self) -> Result<(), E> {
+                println!("{} = {}", self.prefix, "null");
+                Ok(())
+            }
+            fn visit_seq<A>(mut self, mut seq: A) -> Result<(), A::Error>
+                where
+                    A: SeqAccess<'de>,
+            {
+                for i in 0.. {
+                    let k = i.to_string();
+                    self.prefix.push_str(&k);
+                    self.prefix.push('/');
+                    let tmp = seq.next_element::<OuterSentinel>()?;
+                    self.prefix.split_off(self.prefix.len() - k.len() - 1);
+                    if tmp.is_none() {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+
+            fn visit_map<A>(mut self, mut map: A) -> Result<(), A::Error>
+                where
+                    A: MapAccess<'de>,
+            {
+                while let Some(k) = map.next_key::<&str>()? {
+                        self.prefix.push_str(k);
+                        self.prefix.push('/');
+                    map.next_value::<OuterSentinel>()?;
+                    self.prefix.split_off(self.prefix.len() - k.len() - 1);
+                }
+                Ok(())
             }
         }
-        Ok(Sentinel)
-    }
 
-    fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-    where
-        A: SeqAccess<'de>,
+        deserializer.deserialize_any(SentinelVisitor { prefix: self.prefix })
+    }
+}
+
+struct OuterSentinelVisitor { prefix: String }
+
+impl<'de> Visitor<'de> for OuterSentinelVisitor
+{
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "some extra steamy bespoke garbage")
+    }
+    fn visit_bool<E>(self, v: bool) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_i64<E>(self, v: i64) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_u64<E>(self, v: u64) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_f64<E>(self, v: f64) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_str<E>(self, v: &str) -> Result<(), E> {
+        println!("{} = {}", self.prefix, v);
+        Ok(())
+    }
+    fn visit_unit<E>(self) -> Result<(), E> {
+        println!("{} = {}", self.prefix, "null");
+        Ok(())
+    }
+    fn visit_seq<A>(mut self, mut seq: A) -> Result<(), A::Error>
+        where
+            A: SeqAccess<'de>,
     {
+        println!("visiting seq?");
         for i in 0.. {
             let k = i.to_string();
-            unsafe {
-                PREFIX.push_str(&k);
-                PREFIX.push('/');
-            }
-            let tmp = seq.next_element::<Sentinel>()?;
-            unsafe {
-                PREFIX.split_off(PREFIX.len() - k.len() - 1);
-            }
+            self.prefix.push_str(&k);
+            self.prefix.push('/');
+            let tmp = seq.next_element_seed(SentinelSeed { prefix: &mut self.prefix })?;
+            self.prefix.split_off(self.prefix.len() - k.len() - 1);
             if tmp.is_none() {
                 break;
             }
         }
-        Ok(Sentinel)
+        Ok(())
+    }
+
+    fn visit_map<A>(mut self, mut map: A) -> Result<(), A::Error>
+        where
+            A: MapAccess<'de>,
+    {
+        println!("visiting map?");
+        while let Some(k) = map.next_key::<&str>()? {
+            self.prefix.push_str(k);
+            self.prefix.push('/');
+            println!("found key {}, path = {}", k, self.prefix);
+            map.next_value_seed(SentinelSeed { prefix: &mut self.prefix })?;
+            println!("done with value, prefix = {}", self.prefix);
+            self.prefix.split_off(self.prefix.len() - k.len() - 1);
+            println!("split off {}, prefix = {}", k, self.prefix);
+        }
+        Ok(())
     }
 }
 
-impl<'de> Deserialize<'de> for Sentinel {
-    fn deserialize<D>(deserializer: D) -> Result<Sentinel, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        deserializer.deserialize_any(Sentinel)
+struct OuterSentinel;
+impl <'de> Deserialize<'de> for OuterSentinel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error> where
+        D: Deserializer<'de> {
+        let visitor = OuterSentinelVisitor { prefix: String::new() };
+        deserializer.deserialize_any(visitor)?;
+        Ok(OuterSentinel)
     }
 }
 
 fn main() {
     println!("{}", TINY);
-    let _: Sentinel = serde_json::from_str(TINY).unwrap();
+    let visitor = OuterSentinelVisitor { prefix: String::new() };
+    let _ = serde_json::from_str::<OuterSentinel>(TINY).unwrap();
 }
