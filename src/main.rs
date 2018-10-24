@@ -27,7 +27,13 @@ fn main() {
 
         Command::Index { input, data_dir } => {
             let mut prefix = String::new();
-            let mut db = rocksdb::DB::open_default(data_dir).expect("open db");
+            let mut db = {
+                let mut db_opts = rocksdb::Options::default();
+                db_opts.set_use_fsync(false);
+                db_opts.create_if_missing(true);
+                db_opts.increase_parallelism(4);
+                rocksdb::DB::open(&db_opts, data_dir).expect("open db")
+            };
             let fin = BufReader::new(File::open(input).expect("open file"));
             let mut de = serde_json::Deserializer::from_reader(fin);
             de.deserialize_any(SideEffectingVisitor {
@@ -37,9 +43,15 @@ fn main() {
             .expect("deserialize input");
         }
 
-        Command::View { data_dir } => {
-            let db = rocksdb::DB::open_default(data_dir).expect("open db");
-            for (k, v) in db.iterator(rocksdb::IteratorMode::Start) {
+        Command::View { data_dir, prefix } => {
+            let db = {
+                let mut db_opts = rocksdb::Options::default();
+                db_opts.set_prefix_extractor(rocksdb::SliceTransform::create_fixed_prefix(
+                    prefix.len(),
+                ));
+                rocksdb::DB::open(&db_opts, data_dir).expect("open db")
+            };
+            for (k, v) in db.prefix_iterator(prefix.as_bytes()) {
                 println!(
                     "{} = {}",
                     std::str::from_utf8(&k).expect("parse utf8"),
@@ -75,6 +87,8 @@ enum Command {
     View {
         #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
         data_dir: PathBuf,
+        #[structopt(short = "p", long = "prefix")]
+        prefix: String,
     },
 }
 
