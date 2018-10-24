@@ -51,13 +51,21 @@ fn main() {
                 ));
                 rocksdb::DB::open(&db_opts, data_dir).expect("open db")
             };
+            let mut json = serde_json::Value::Null;
             for (k, v) in db.prefix_iterator(prefix.as_bytes()) {
-                println!(
-                    "{} = {}",
-                    std::str::from_utf8(&k).expect("parse utf8"),
-                    std::str::from_utf8(&v).expect("parse utf8")
+                let path: Vec<String> = std::str::from_utf8(&k)
+                    .expect("parse utf8")
+                    .split('/')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect();
+                set_json(
+                    &mut json,
+                    &path,
+                    String::from_utf8(v.to_vec()).expect("parse utf8"),
                 );
             }
+            println!("{}", serde_json::to_string(&json).expect("serialize json"));
         }
     }
 }
@@ -202,4 +210,27 @@ impl KvConsumer for rocksdb::DB {
         self.put(k.as_bytes(), v.as_bytes())
             .expect("write to rocksdb");
     }
+}
+
+fn set_json(json: &mut serde_json::Value, path: &[String], value: String) {
+    if path.is_empty() {
+        *json = serde_json::Value::String(value);
+        return;
+    }
+
+    match json {
+        serde_json::Value::Object(_) => {}
+        _ => {
+            *json = serde_json::Value::Object(serde_json::Map::new());
+        }
+    }
+
+    let children = match json {
+        serde_json::Value::Object(children) => children,
+        _ => unreachable!(),
+    };
+    let child = children
+        .entry(path[0].clone())
+        .or_insert(serde_json::Value::Null);
+    set_json(child, &path[1..], value);
 }
