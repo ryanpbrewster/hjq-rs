@@ -1,12 +1,12 @@
-#![feature(const_string_new)]
+extern crate rocksdb;
 extern crate serde;
 extern crate serde_json;
 extern crate structopt;
 
-use serde::de::{Deserialize, DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use std::fmt;
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::{BufReader, StdoutLock, Write};
 use std::path::PathBuf;
 use structopt::StructOpt;
 
@@ -14,8 +14,23 @@ fn main() {
     let opts = Options::from_args();
     match opts.cmd {
         Command::Trace { input } => {
+            let mut prefix = String::new();
+            let stdout = std::io::stdout();
             let fin = BufReader::new(File::open(input).expect("open file"));
-            serde_json::from_reader::<BufReader<File>, SideEffectingSentinel>(fin).unwrap();
+            let mut de = serde_json::Deserializer::from_reader(fin);
+            de.deserialize_any(SideEffectingVisitor {
+                prefix: &mut prefix,
+                writer: &mut stdout.lock(),
+            })
+            .expect("deserialize input");
+        }
+
+        Command::Index { input, data_dir } => {
+            let mut _prefix = String::new();
+            let mut _db = rocksdb::DB::open_default(data_dir).expect("open db");
+            let fin = BufReader::new(File::open(input).expect("open file"));
+            let mut _de = serde_json::Deserializer::from_reader(fin);
+            unimplemented!()
         }
     }
 }
@@ -33,22 +48,13 @@ enum Command {
         #[structopt(short = "i", long = "input", parse(from_os_str))]
         input: PathBuf,
     },
-}
-
-struct SideEffectingSentinel;
-impl<'de> Deserialize<'de> for SideEffectingSentinel {
-    fn deserialize<D>(deserializer: D) -> Result<Self, <D as Deserializer<'de>>::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let mut buf = String::new();
-        let stdout = std::io::stdout();
-        deserializer.deserialize_any(SideEffectingVisitor {
-            prefix: &mut buf,
-            writer: &mut stdout.lock(),
-        })?;
-        Ok(SideEffectingSentinel)
-    }
+    #[structopt(name = "index")]
+    Index {
+        #[structopt(short = "i", long = "input", parse(from_os_str))]
+        input: PathBuf,
+        #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
+        data_dir: PathBuf,
+    },
 }
 
 struct SideEffectingVisitor<'a, W> {
@@ -57,7 +63,7 @@ struct SideEffectingVisitor<'a, W> {
 }
 impl<'de, 'a, W> DeserializeSeed<'de> for SideEffectingVisitor<'a, W>
 where
-    W: Write,
+    W: KvConsumer,
 {
     type Value = ();
 
@@ -74,7 +80,7 @@ where
 
 impl<'de, 'a, W> Visitor<'de> for SideEffectingVisitor<'a, W>
 where
-    W: Write,
+    W: KvConsumer,
 {
     type Value = ();
 
@@ -82,31 +88,31 @@ where
         write!(formatter, "anything vaguely json-like")
     }
     fn visit_bool<E>(self, v: bool) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, &v.to_string());
         Ok(())
     }
     fn visit_i64<E>(self, v: i64) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, &v.to_string());
         Ok(())
     }
     fn visit_u64<E>(self, v: u64) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, &v.to_string());
         Ok(())
     }
     fn visit_f64<E>(self, v: f64) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, &v.to_string());
         Ok(())
     }
     fn visit_str<E>(self, v: &str) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, v);
         Ok(())
     }
     fn visit_string<E>(self, v: String) -> Result<(), E> {
-        writeln!(self.writer, "{} = {}", self.prefix, v);
+        self.writer.accept(self.prefix, &v);
         Ok(())
     }
     fn visit_unit<E>(self) -> Result<(), E> {
-        writeln!(self.writer, "{} = null", self.prefix);
+        self.writer.accept(self.prefix, "null");
         Ok(())
     }
     fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
@@ -143,5 +149,15 @@ where
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
         }
         Ok(())
+    }
+}
+
+trait KvConsumer {
+    fn accept(&mut self, k: &str, v: &str);
+}
+
+impl<'a> KvConsumer for StdoutLock<'a> {
+    fn accept(&mut self, k: &str, v: &str) {
+        writeln!(self, "{} = {}", k, v);
     }
 }
