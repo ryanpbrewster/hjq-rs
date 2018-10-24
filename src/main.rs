@@ -26,11 +26,26 @@ fn main() {
         }
 
         Command::Index { input, data_dir } => {
-            let mut _prefix = String::new();
-            let mut _db = rocksdb::DB::open_default(data_dir).expect("open db");
+            let mut prefix = String::new();
+            let mut db = rocksdb::DB::open_default(data_dir).expect("open db");
             let fin = BufReader::new(File::open(input).expect("open file"));
-            let mut _de = serde_json::Deserializer::from_reader(fin);
-            unimplemented!()
+            let mut de = serde_json::Deserializer::from_reader(fin);
+            de.deserialize_any(SideEffectingVisitor {
+                prefix: &mut prefix,
+                writer: &mut db,
+            })
+            .expect("deserialize input");
+        }
+
+        Command::View { data_dir } => {
+            let db = rocksdb::DB::open_default(data_dir).expect("open db");
+            for (k, v) in db.iterator(rocksdb::IteratorMode::Start) {
+                println!(
+                    "{} = {}",
+                    std::str::from_utf8(&k).expect("parse utf8"),
+                    std::str::from_utf8(&v).expect("parse utf8")
+                );
+            }
         }
     }
 }
@@ -52,6 +67,12 @@ enum Command {
     Index {
         #[structopt(short = "i", long = "input", parse(from_os_str))]
         input: PathBuf,
+        #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
+        data_dir: PathBuf,
+    },
+
+    #[structopt(name = "view")]
+    View {
         #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
         data_dir: PathBuf,
     },
@@ -158,6 +179,13 @@ trait KvConsumer {
 
 impl<'a> KvConsumer for StdoutLock<'a> {
     fn accept(&mut self, k: &str, v: &str) {
-        writeln!(self, "{} = {}", k, v);
+        writeln!(self, "{} = {}", k, v).expect("write to stdout");
+    }
+}
+
+impl KvConsumer for rocksdb::DB {
+    fn accept(&mut self, k: &str, v: &str) {
+        self.put(k.as_bytes(), v.as_bytes())
+            .expect("write to rocksdb");
     }
 }
