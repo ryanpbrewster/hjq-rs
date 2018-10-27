@@ -14,16 +14,24 @@ use structopt::StructOpt;
 fn main() {
     let opts = Options::from_args();
     match opts.cmd {
-        Command::Trace { input } => {
+        Command::Trace { input, silent } => {
             let mut prefix = String::new();
-            let stdout = std::io::stdout();
             let fin = BufReader::new(File::open(input).expect("open file"));
             let mut de = serde_json::Deserializer::from_reader(fin);
-            de.deserialize_any(SideEffectingVisitor {
-                prefix: &mut prefix,
-                writer: &mut stdout.lock(),
-            })
-            .expect("deserialize input");
+            if silent {
+                de.deserialize_any(SideEffectingVisitor {
+                    prefix: &mut prefix,
+                    writer: &mut Noop,
+                })
+                .expect("deserialize input");
+            } else {
+                let stdout = std::io::stdout();
+                de.deserialize_any(SideEffectingVisitor {
+                    prefix: &mut prefix,
+                    writer: &mut stdout.lock(),
+                })
+                .expect("deserialize input");
+            }
         }
 
         Command::Index { input, data_dir } => {
@@ -66,7 +74,10 @@ fn main() {
                     serde_json::from_slice(&v).expect("parse json from db"),
                 );
             }
-            println!("{}", serde_json::to_string_pretty(&json).expect("serialize json"));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json).expect("serialize json")
+            );
         }
 
         Command::Keys { data_dir, prefix } => {
@@ -116,6 +127,8 @@ enum Command {
     Trace {
         #[structopt(short = "i", long = "input", parse(from_os_str))]
         input: PathBuf,
+        #[structopt(short = "s", long = "silent")]
+        silent: bool,
     },
     #[structopt(name = "index")]
     Index {
@@ -245,6 +258,11 @@ impl<'a> KvConsumer for StdoutLock<'a> {
     fn accept(&mut self, k: &str, v: &serde_json::Value) {
         writeln!(self, "{} = {}", k, v).expect("write to stdout");
     }
+}
+
+struct Noop;
+impl KvConsumer for Noop {
+    fn accept(&mut self, _k: &str, _v: &serde_json::Value) {}
 }
 
 impl KvConsumer for rocksdb::DB {
