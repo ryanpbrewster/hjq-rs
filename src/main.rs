@@ -4,6 +4,7 @@ extern crate serde_json;
 extern crate structopt;
 
 use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde_json::json;
 use std::fmt;
 use std::fs::File;
 use std::io::{BufReader, StdoutLock, Write};
@@ -62,10 +63,10 @@ fn main() {
                 set_json(
                     &mut json,
                     &path,
-                    String::from_utf8(v.to_vec()).expect("parse utf8"),
+                    serde_json::from_slice(&v).expect("parse json from db"),
                 );
             }
-            println!("{}", serde_json::to_string(&json).expect("serialize json"));
+            println!("{}", serde_json::to_string_pretty(&json).expect("serialize json"));
         }
 
         Command::Keys { data_dir, prefix } => {
@@ -172,31 +173,31 @@ where
         write!(formatter, "anything vaguely json-like")
     }
     fn visit_bool<E>(self, v: bool) -> Result<(), E> {
-        self.writer.accept(self.prefix, &v.to_string());
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_i64<E>(self, v: i64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &v.to_string());
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_u64<E>(self, v: u64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &v.to_string());
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_f64<E>(self, v: f64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &v.to_string());
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_str<E>(self, v: &str) -> Result<(), E> {
-        self.writer.accept(self.prefix, v);
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_string<E>(self, v: String) -> Result<(), E> {
-        self.writer.accept(self.prefix, &v);
+        self.writer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_unit<E>(self) -> Result<(), E> {
-        self.writer.accept(self.prefix, "null");
+        self.writer.accept(self.prefix, &serde_json::Value::Null);
         Ok(())
     }
     fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
@@ -237,25 +238,28 @@ where
 }
 
 trait KvConsumer {
-    fn accept(&mut self, k: &str, v: &str);
+    fn accept(&mut self, k: &str, v: &serde_json::Value);
 }
 
 impl<'a> KvConsumer for StdoutLock<'a> {
-    fn accept(&mut self, k: &str, v: &str) {
+    fn accept(&mut self, k: &str, v: &serde_json::Value) {
         writeln!(self, "{} = {}", k, v).expect("write to stdout");
     }
 }
 
 impl KvConsumer for rocksdb::DB {
-    fn accept(&mut self, k: &str, v: &str) {
-        self.put(k.as_bytes(), v.as_bytes())
-            .expect("write to rocksdb");
+    fn accept(&mut self, k: &str, v: &serde_json::Value) {
+        self.put(
+            k.as_bytes(),
+            &serde_json::to_vec(v).expect("serialize json"),
+        )
+        .expect("write to rocksdb");
     }
 }
 
-fn set_json(json: &mut serde_json::Value, path: &[String], value: String) {
+fn set_json(json: &mut serde_json::Value, path: &[String], value: serde_json::Value) {
     if path.is_empty() {
-        *json = serde_json::Value::String(value);
+        *json = value;
         return;
     }
 
