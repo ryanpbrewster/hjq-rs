@@ -67,6 +67,39 @@ fn main() {
             }
             println!("{}", serde_json::to_string(&json).expect("serialize json"));
         }
+
+        Command::Keys { data_dir, prefix } => {
+            let pre = prefix.into_bytes();
+            let db = rocksdb::DB::open_default(data_dir).expect("open db");
+
+            // Skip through the key-space. After finding a key, set the bookend at the
+            // end of the range spanned by that key.
+            let mut iter = db.raw_iterator();
+            let mut bookend = pre.clone();
+            loop {
+                iter.seek(&bookend);
+                if !iter.valid() {
+                    break;
+                }
+                let k = match iter.key() {
+                    None => break,
+                    Some(k) => k,
+                };
+                if !k.starts_with(&pre) || k.len() <= pre.len() {
+                    break;
+                }
+                let key: Vec<u8> = k
+                    .into_iter()
+                    .skip(pre.len())
+                    .take_while(|&b| b != b'/')
+                    .collect();
+                assert!(!key.is_empty(), "make sure your prefix ends in /");
+                println!("{}", std::str::from_utf8(&key).expect("parse utf8 from db"));
+                bookend = pre.clone();
+                bookend.extend(key);
+                bookend.push(b'/' + 1);
+            }
+        }
     }
 }
 
@@ -95,7 +128,15 @@ enum Command {
     View {
         #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
         data_dir: PathBuf,
-        #[structopt(short = "p", long = "prefix")]
+        #[structopt(short = "p", long = "prefix", default_value = "")]
+        prefix: String,
+    },
+
+    #[structopt(name = "keys")]
+    Keys {
+        #[structopt(short = "d", long = "data-dir", parse(from_os_str))]
+        data_dir: PathBuf,
+        #[structopt(short = "p", long = "prefix", default_value = "")]
         prefix: String,
     },
 }
@@ -218,6 +259,8 @@ fn set_json(json: &mut serde_json::Value, path: &[String], value: String) {
         return;
     }
 
+    // TODO(rpb): there has got to be a better way of doing this than this
+    // hacky two-phase unification+extraction process
     match json {
         serde_json::Value::Object(_) => {}
         _ => {
