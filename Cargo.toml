@@ -8,4 +8,7 @@ edition = "2018"
 serde = "1.0"
 serde_json = "1.0"
 structopt = "0.2"
-rocksdb = "0.10"
+
+[dependencies.rocksdb]
+git = "https://github.com/rust-rocksdb/rust-rocksdb"
+rev = "08246440d55b00cb6fb85d4748dc9e478ccfa912"

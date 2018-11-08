@@ -40,6 +40,7 @@ fn main() {
                 let mut db_opts = rocksdb::Options::default();
                 db_opts.set_use_fsync(false);
                 db_opts.create_if_missing(true);
+                db_opts.set_compression_type(rocksdb::DBCompressionType::Zstd);
                 db_opts.increase_parallelism(4);
                 rocksdb::DB::open(&db_opts, data_dir).expect("open db")
             };
