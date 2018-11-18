@@ -268,9 +268,17 @@ impl KvConsumer for Noop {
 
 impl KvConsumer for rocksdb::DB {
     fn accept(&mut self, k: &str, v: &serde_json::Value) {
-        self.put(
+        // Disable the write-ahead log here. We don't care about disaster recovery, if there's a
+        // failure we'll just re-run the operation from scratch. This increases speed by ~6x.
+        let write_opts = {
+            let mut opts = rocksdb::WriteOptions::default();
+            opts.disable_wal(true);
+            opts
+        };
+        self.put_opt(
             k.as_bytes(),
             &serde_json::to_vec(v).expect("serialize json"),
+            &write_opts,
         )
         .expect("write to rocksdb");
     }
