@@ -14,7 +14,7 @@ where
     let mut de = serde_json::Deserializer::from_reader(input);
     de.deserialize_any(SideEffectingVisitor {
         prefix: &mut prefix,
-        writer: &mut f,
+        consumer: &mut f,
     })
     .expect("deserialize input");
 }
@@ -48,13 +48,13 @@ mod test {
     }
 }
 
-struct SideEffectingVisitor<'a, W> {
+struct SideEffectingVisitor<'a, C> {
     prefix: &'a mut String,
-    writer: &'a mut W,
+    consumer: &'a mut C,
 }
-impl<'de, 'a, W> DeserializeSeed<'de> for SideEffectingVisitor<'a, W>
+impl<'de, 'a, C> DeserializeSeed<'de> for SideEffectingVisitor<'a, C>
 where
-    W: KvConsumer,
+    C: KvConsumer,
 {
     type Value = ();
 
@@ -64,14 +64,14 @@ where
     {
         deserializer.deserialize_any(SideEffectingVisitor {
             prefix: self.prefix,
-            writer: self.writer,
+            consumer: self.consumer,
         })
     }
 }
 
-impl<'de, 'a, W> Visitor<'de> for SideEffectingVisitor<'a, W>
+impl<'de, 'a, C> Visitor<'de> for SideEffectingVisitor<'a, C>
 where
-    W: KvConsumer,
+    C: KvConsumer,
 {
     type Value = ();
 
@@ -79,31 +79,31 @@ where
         write!(formatter, "anything vaguely json-like")
     }
     fn visit_bool<E>(self, v: bool) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_i64<E>(self, v: i64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_u64<E>(self, v: u64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_f64<E>(self, v: f64) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_str<E>(self, v: &str) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_string<E>(self, v: String) -> Result<(), E> {
-        self.writer.accept(self.prefix, &json!(v));
+        self.consumer.accept(self.prefix, &json!(v));
         Ok(())
     }
     fn visit_unit<E>(self) -> Result<(), E> {
-        self.writer.accept(self.prefix, &serde_json::Value::Null);
+        self.consumer.accept(self.prefix, &serde_json::Value::Null);
         Ok(())
     }
     fn visit_seq<A>(self, mut seq: A) -> Result<(), A::Error>
@@ -116,7 +116,7 @@ where
             self.prefix.push('/');
             let tmp = seq.next_element_seed(SideEffectingVisitor {
                 prefix: self.prefix,
-                writer: self.writer,
+                consumer: self.consumer,
             })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
             if tmp.is_none() {
@@ -135,7 +135,7 @@ where
             self.prefix.push('/');
             map.next_value_seed(SideEffectingVisitor {
                 prefix: self.prefix,
-                writer: self.writer,
+                consumer: self.consumer,
             })?;
             self.prefix.split_off(self.prefix.len() - k.len() - 1);
         }
