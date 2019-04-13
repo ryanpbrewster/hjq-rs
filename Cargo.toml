@@ -9,3 +9,7 @@ serde = "1.0"
 serde_json = "1.0"
 structopt = "0.2"
 rocksdb = "0.12.1"
+
+[[bin]]
+name = "hjq"
+path = "./src/bin/main.rs"
