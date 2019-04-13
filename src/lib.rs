@@ -5,7 +5,50 @@ extern crate serde_json;
 use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::json;
 use std::fmt;
+use std::io;
 use std::io::{StdoutLock, Write};
+
+pub fn for_each_primitive<F>(input: impl io::Read, mut f: F)
+where
+    F: FnMut(&str, &serde_json::Value),
+{
+    let mut prefix = String::new();
+    let mut de = serde_json::Deserializer::from_reader(input);
+    de.deserialize_any(SideEffectingVisitor {
+        prefix: &mut prefix,
+        writer: &mut f,
+    })
+    .expect("deserialize input");
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn count() {
+        let js = r#" {"a": 0, "b": 1, "c": "foo"} "#;
+
+        let mut total = 0;
+        for_each_primitive(js.as_bytes(), |_, _| {
+            total += 1;
+        });
+
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn flatten() {
+        let js = r#" {"a": 3, "b": 1, "c": 4} "#;
+
+        let mut buf = Vec::new();
+        for_each_primitive(js.as_bytes(), |_, v| {
+            buf.push(v.clone());
+        });
+
+        assert_eq!(buf, vec![3, 1, 4]);
+    }
+}
 
 pub struct SideEffectingVisitor<'a, W> {
     pub prefix: &'a mut String,
@@ -104,6 +147,15 @@ where
 
 pub trait KvConsumer {
     fn accept(&mut self, k: &str, v: &serde_json::Value);
+}
+
+impl<F> KvConsumer for F
+where
+    F: FnMut(&str, &serde_json::Value),
+{
+    fn accept(&mut self, k: &str, v: &serde_json::Value) {
+        self(k, v)
+    }
 }
 
 impl<'a> KvConsumer for StdoutLock<'a> {
