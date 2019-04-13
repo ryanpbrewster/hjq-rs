@@ -5,40 +5,29 @@ extern crate structopt;
 
 extern crate hjq;
 
-use serde::de::Deserializer;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use structopt::StructOpt;
-
-use hjq::{Noop, SideEffectingVisitor};
 
 fn main() {
     let opts = Options::from_args();
     match opts.cmd {
         Command::Trace { input, silent } => {
-            let mut prefix = String::new();
             let fin = BufReader::new(File::open(input).expect("open file"));
-            let mut de = serde_json::Deserializer::from_reader(fin);
             if silent {
-                de.deserialize_any(SideEffectingVisitor {
-                    prefix: &mut prefix,
-                    writer: &mut Noop,
-                })
-                .expect("deserialize input");
+                hjq::for_each_primitive(fin, |_, _| ());
             } else {
                 let stdout = std::io::stdout();
-                de.deserialize_any(SideEffectingVisitor {
-                    prefix: &mut prefix,
-                    writer: &mut stdout.lock(),
-                })
-                .expect("deserialize input");
+                let mut lock = stdout.lock();
+                hjq::for_each_primitive(fin, |k, v| {
+                    writeln!(lock, "{} = {}", k, v).expect("write to stdout");
+                });
             }
         }
 
         Command::Index { input, data_dir } => {
-            let mut prefix = String::new();
-            let mut db = {
+            let db = {
                 let mut db_opts = rocksdb::Options::default();
                 db_opts.set_use_fsync(false);
                 db_opts.create_if_missing(true);
@@ -47,12 +36,21 @@ fn main() {
                 rocksdb::DB::open(&db_opts, data_dir).expect("open db")
             };
             let fin = BufReader::new(File::open(input).expect("open file"));
-            let mut de = serde_json::Deserializer::from_reader(fin);
-            de.deserialize_any(SideEffectingVisitor {
-                prefix: &mut prefix,
-                writer: &mut db,
-            })
-            .expect("deserialize input");
+            hjq::for_each_primitive(fin, |k, v| {
+                // Disable the write-ahead log here. We don't care about disaster recovery, if there's a
+                // failure we'll just re-run the operation from scratch. This increases speed by ~6x.
+                let write_opts = {
+                    let mut opts = rocksdb::WriteOptions::default();
+                    opts.disable_wal(true);
+                    opts
+                };
+                db.put_opt(
+                    k.as_bytes(),
+                    &serde_json::to_vec(v).expect("serialize json"),
+                    &write_opts,
+                )
+                .expect("write to rocksdb");
+            });
         }
 
         Command::View { data_dir, prefix } => {

@@ -1,4 +1,3 @@
-extern crate rocksdb;
 extern crate serde;
 extern crate serde_json;
 
@@ -6,7 +5,6 @@ use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::json;
 use std::fmt;
 use std::io;
-use std::io::{StdoutLock, Write};
 
 pub fn for_each_primitive<F>(input: impl io::Read, mut f: F)
 where
@@ -50,9 +48,9 @@ mod test {
     }
 }
 
-pub struct SideEffectingVisitor<'a, W> {
-    pub prefix: &'a mut String,
-    pub writer: &'a mut W,
+struct SideEffectingVisitor<'a, W> {
+    prefix: &'a mut String,
+    writer: &'a mut W,
 }
 impl<'de, 'a, W> DeserializeSeed<'de> for SideEffectingVisitor<'a, W>
 where
@@ -145,7 +143,7 @@ where
     }
 }
 
-pub trait KvConsumer {
+trait KvConsumer {
     fn accept(&mut self, k: &str, v: &serde_json::Value);
 }
 
@@ -155,34 +153,5 @@ where
 {
     fn accept(&mut self, k: &str, v: &serde_json::Value) {
         self(k, v)
-    }
-}
-
-impl<'a> KvConsumer for StdoutLock<'a> {
-    fn accept(&mut self, k: &str, v: &serde_json::Value) {
-        writeln!(self, "{} = {}", k, v).expect("write to stdout");
-    }
-}
-
-pub struct Noop;
-impl KvConsumer for Noop {
-    fn accept(&mut self, _k: &str, _v: &serde_json::Value) {}
-}
-
-impl KvConsumer for rocksdb::DB {
-    fn accept(&mut self, k: &str, v: &serde_json::Value) {
-        // Disable the write-ahead log here. We don't care about disaster recovery, if there's a
-        // failure we'll just re-run the operation from scratch. This increases speed by ~6x.
-        let write_opts = {
-            let mut opts = rocksdb::WriteOptions::default();
-            opts.disable_wal(true);
-            opts
-        };
-        self.put_opt(
-            k.as_bytes(),
-            &serde_json::to_vec(v).expect("serialize json"),
-            &write_opts,
-        )
-        .expect("write to rocksdb");
     }
 }
