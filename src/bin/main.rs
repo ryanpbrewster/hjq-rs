@@ -103,6 +103,7 @@ fn main() {
                 }
                 let key: Vec<u8> = k
                     .into_iter()
+                    .cloned()
                     .skip(pre.len())
                     .take_while(|&b| b != b'/')
                     .collect();
